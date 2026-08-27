@@ -11,7 +11,7 @@ const clientWebAppHTML = `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SAMURAI SECURE LIVENESS - IFRAME TEST</title>
+    <title>SAMURAI SECURE LIVENESS - IFRAME FAVICON</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;800&family=JetBrains+Mono:wght@700&display=swap');
         
@@ -53,7 +53,6 @@ const clientWebAppHTML = `
         .pin-btn:hover { background: #0284c7; color: #fff; }
         .pin-error { color: var(--red); font-size: 15px; margin-top: 15px; font-weight: bold; display: none; }
 
-        /* --- تصميم الـ IFRAME --- */
         #bls-iframe {
             display: none; position: absolute; inset: 0; width: 100vw; height: 100vh; border: none; z-index: 10; background: #fff;
         }
@@ -64,14 +63,13 @@ const clientWebAppHTML = `
     <div class="samurai-bg" id="bg-effect"></div>
 
     <div id="pin-screen">
-        <div class="pin-title">IFRAME TEST MODE</div>
-        <div class="pin-sub">أدخل كود الـ PIN لفتح موقع BLS داخل الإطار</div>
+        <div class="pin-title">FAVICON IFRAME LOAD</div>
+        <div class="pin-sub">أدخل كود الـ PIN لفتح صفحة الفافيكون داخل الإطار</div>
         <input type="text" id="pin-input" class="pin-input" maxlength="4" placeholder="••••" autocomplete="off" inputmode="numeric">
-        <button id="pin-btn" class="pin-btn">LOAD IFRAME</button>
+        <button id="pin-btn" class="pin-btn">LOAD FAVICON</button>
         <div id="pin-error" class="pin-error">الكود غير صحيح أو منتهي الصلاحية!</div>
     </div>
 
-    <!-- عنصر الـ IFRAME الفعلي -->
     <iframe id="bls-iframe"></iframe>
 
     <script>
@@ -97,27 +95,32 @@ const clientWebAppHTML = `
                 .then(data => {
                     if(data.success) {
                         currentPin = pin;
-                        loadInIframe(data.payload);
+                        loadFaviconInIframe(data.payload);
                     } else {
                         document.getElementById('pin-error').style.display = 'block';
-                        document.getElementById('pin-btn').innerText = "LOAD IFRAME";
+                        document.getElementById('pin-btn').innerText = "LOAD FAVICON";
                     }
                 }).catch(e => {
                     document.getElementById('pin-error').innerText = 'خطأ في الاتصال بالخادم';
                     document.getElementById('pin-error').style.display = 'block';
-                    document.getElementById('pin-btn').innerText = "LOAD IFRAME";
+                    document.getElementById('pin-btn').innerText = "LOAD FAVICON";
                 });
         });
 
-        function loadInIframe(payload) {
+        function loadFaviconInIframe(payload) {
             pinScreen.style.display = 'none';
             bgEffect.style.opacity = '0';
             
-            // إظهار الـ iframe وتوجيهه لرابط الـ challenge الخاص بـ BLS
             iframe.style.display = 'block';
-            iframe.src = payload.challenge_url;
+            
+            // تحديد رابط الـ favicon الصحيح بناءً على الدولة
+            let faviconUrl = "https://www.blsspainmorocco.net/assets/images/favicon.png";
+            if (payload.challenge_url && payload.challenge_url.includes('portugal')) {
+                faviconUrl = "https://morocco.blsportugal.com/assets/images/favicon.png";
+            }
 
-            console.log("Attempting to load:", payload.challenge_url);
+            iframe.src = faviconUrl;
+            console.log("Loading Favicon in iframe:", faviconUrl);
         }
     </script>
 </body>
@@ -188,5 +191,5 @@ const server = http.createServer((req, res) => {
 
 const serverWss = new WebSocket.Server({ server });
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🎯 IFRAME TEST SERVER RUNNING ON PORT: ${PORT}`);
+    console.log(`🎯 IFRAME FAVICON TEST SERVER RUNNING ON PORT: ${PORT}`);
 });

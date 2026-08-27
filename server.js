@@ -3,89 +3,75 @@ const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 8080;
 
-// 🏦 خزنة الجلسات (تخزن البيانات في الذاكرة الحية)
+// 🏦 خزنة الجلسات الحية
 const sessionVault = {}; 
 
+// توليد معرف جلسة عشوائي وقصير (مثل: 8X2F9A)
+const generateSessionId = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+
 const server = http.createServer((req, res) => {
-    // تفعيل الـ CORS ليسمح للإضافات بالاتصال
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-    // 1. الماستر يطلب إنشاء كود (Create Session)
-    if (req.url === '/create-pin' && req.method === 'POST') {
+    // 1. الماستر يطلب إنشاء رابط الجلسة
+    if (req.url === '/create-session' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
         req.on('end', () => {
             try {
                 const data = JSON.parse(body);
-                let pin;
-                // توليد كود من 4 أرقام غير مكرر
-                do {
-                    pin = Math.floor(1000 + Math.random() * 9000).toString();
-                } while (sessionVault[pin]);
-
-                // حفظ بيانات الماستر وربطها بالكود (صالح لـ 5 دقائق فقط للأمان)
-                sessionVault[pin] = { payload: data.payload, createdAt: Date.now() };
-                setTimeout(() => { delete sessionVault[pin]; }, 5 * 60 * 1000); // تدمير ذاتي
+                const sessionId = generateSessionId();
+                
+                // حفظ الجلسة في الذاكرة لمدة 10 دقائق
+                sessionVault[sessionId] = { payload: data.payload, createdAt: Date.now() };
+                setTimeout(() => { delete sessionVault[sessionId]; }, 10 * 60 * 1000);
 
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: true, pin: pin }));
-                console.log(`[+] Master generated PIN: ${pin}`);
+                res.end(JSON.stringify({ success: true, session: sessionId }));
+                console.log(`[+] Master Link Generated for Session: ${sessionId}`);
             } catch (e) {
                 res.writeHead(400); res.end();
             }
         });
     } 
-    // 2. الكليان يطلب فتح الجلسة باستخدام الكود (Join Session)
-    else if (req.url.startsWith('/join-pin') && req.method === 'GET') {
+    // 2. الكليان (الإضافة) تطلب سحب البيانات برقم الجلسة
+    else if (req.url.startsWith('/get-session') && req.method === 'GET') {
         const url = new URL(req.url, `http://${req.headers.host}`);
-        const pin = url.searchParams.get('pin');
+        const sessionId = url.searchParams.get('session');
 
-        // 🧪 ================= وضع التيست (TEST MODE) ================= 🧪
-        if (pin === '0000') {
-            // توليد بيانات وهمية تماماً، لكن نستخدم رابط SDK الحقيقي لكي تفتح الكاميرا بنجاح
-            const testPayload = {
-                user_id: "TEST_USER_9999",
-                transaction_id: "TEST_TRANS_9999",
-                ip_address: "127.0.0.1",
-                plugin_liveness_url: "https://web-sdk.prod.cdn.spain.ozforensics.com/blsinternational/plugin_liveness.php",
-                challenge_url: "https://www.blsspainmorocco.net/MAR/appointment/livenessrequest",
-                selfie_code: "0000",
-                check_id: "TEST_CHECK_9999"
-            };
-            
+        if (sessionVault[sessionId]) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, payload: testPayload }));
-            console.log(`[🧪 TEST MODE] Client successfully joined using TEST PIN: 0000`);
-            return; // إنهاء التنفيذ لكي لا يكمل البحث في الخزنة الحقيقية
-        }
-        // =============================================================
-
-        // البحث في الجلسات الحقيقية
-        if (sessionVault[pin]) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, payload: sessionVault[pin].payload }));
-            console.log(`[>] Client successfully joined using PIN: ${pin}`);
+            res.end(JSON.stringify({ success: true, payload: sessionVault[sessionId].payload }));
+            console.log(`[>] Client Extension Intercepted Data for: ${sessionId}`);
         } else {
             res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: 'الكود غير صحيح أو انتهت صلاحيته' }));
+            res.end(JSON.stringify({ success: false, error: 'Session Expired' }));
         }
+    } 
+    // 3. صفحة وهمية (في حال فتح العميل الرابط ولم تكن إضافتك مفعلة لديه)
+    else if (req.url.startsWith('/client')) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`
+            <body style="background:#050505; color:#fff; text-align:center; font-family:sans-serif; padding-top:20vh;">
+                <h1 style="color:#ff003c; font-size: 40px; letter-spacing: 2px;">⚠️ SAMURAI EXTENSION REQUIRED</h1>
+                <p style="color:#94a3b8; font-size: 18px;">لم يتم العثور على إضافة الحماية في متصفحك. الرجاء تثبيتها والمحاولة مجدداً.</p>
+            </body>
+        `);
     } else {
         res.writeHead(404); res.end();
     }
 });
 
-// إعداد الـ WebSocket للتواصل اللحظي
 const wss = new WebSocket.Server({ server });
 wss.on('connection', (ws) => {
     ws.on('message', (message) => {
-        // إذا أردت بث رسائل الويب سوكيت بين الكليان والماستر
+        // يمكنك لاحقاً إضافة بث رسائل التزامن بين الماستر والكليان هنا
     });
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log("🎯 سيرفر SAMURAI (PIN SYSTEM) يعمل الآن على البورت: " + PORT);
+    console.log("🎯 سيرفر SAMURAI (MAGIC LINK) يعمل الآن على البورت: " + PORT);
 });

@@ -33,7 +33,6 @@ const clientWebAppHTML = `
             height: 100vh; width: 100vw;
         }
 
-        /* --- خلفية الشبكة --- */
         .samurai-bg { 
             position: absolute; inset: 0; opacity: 0.15; z-index: 1;
             background-image: linear-gradient(var(--brand) 1px, transparent 1px), linear-gradient(90deg, var(--brand) 1px, transparent 1px); 
@@ -43,7 +42,6 @@ const clientWebAppHTML = `
             transition: 0.5s;
         }
 
-        /* --- واجهة إدخال الـ PIN --- */
         #pin-screen {
             position: relative; z-index: 10;
             background: rgba(15,23,42,0.9); padding: 40px; border-radius: 20px; 
@@ -59,7 +57,6 @@ const clientWebAppHTML = `
         .pin-btn:hover { background: #0284c7; color: #fff; }
         .pin-error { color: var(--red); font-size: 15px; margin-top: 15px; font-weight: bold; display: none; }
 
-        /* --- واجهة الكاميرا والسيلفي --- */
         #camera-screen {
             display: none; position: relative; z-index: 10; width: 100%; height: 100%;
             flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 30px;
@@ -76,7 +73,6 @@ const clientWebAppHTML = `
         .camera-status { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #fff; text-align: left; border-left: 1px solid rgba(255,255,255,0.15); padding-left: 15px; flex-grow: 1; margin: 0 15px; }
         .timer-display { font-family: 'JetBrains Mono', monospace; font-size: 2rem; font-weight: 800; color: var(--brand); margin: 0; }
 
-        /* --- شاشة النجاح --- */
         #success-screen {
             display: none; position: relative; z-index: 10; width: 90%; max-width: 500px;
             background: rgba(12, 12, 16, 0.95); border-radius: 20px; padding: 40px 30px;
@@ -86,14 +82,12 @@ const clientWebAppHTML = `
         .success-title { color: var(--green); font-size: 3rem; margin: 0; text-shadow: 0 0 20px rgba(0,255,157,0.5); }
         .success-sub { color: #d0d0d0; font-family: monospace; font-size: 15px; margin-bottom: 20px; }
         .success-btn { background: var(--green); color: #000; border: none; padding: 15px 30px; font-weight: 800; font-size: 18px; border-radius: 12px; cursor: pointer; text-transform: uppercase; }
-
     </style>
 </head>
 <body>
 
     <div class="samurai-bg" id="bg-effect"></div>
 
-    <!-- 1. شاشة إدخال الكود -->
     <div id="pin-screen">
         <div class="pin-title">SECURE CONNECTION</div>
         <div class="pin-sub">الرجاء إدخال كود التفعيل المكون من 4 أرقام لفتح الكاميرا</div>
@@ -102,7 +96,6 @@ const clientWebAppHTML = `
         <div id="pin-error" class="pin-error">الكود غير صحيح أو منتهي الصلاحية!</div>
     </div>
 
-    <!-- 2. شاشة الكاميرا النشطة -->
     <div id="camera-screen">
         <div class="glass-panel">
             <h1 class="camera-title" id="cam-title">SAMURAI</h1>
@@ -111,7 +104,6 @@ const clientWebAppHTML = `
         </div>
     </div>
 
-    <!-- 3. شاشة النجاح -->
     <div id="success-screen">
         <h1 class="success-title">SUCCESS</h1>
         <div class="success-sub">VERIFICATION COMPLETE</div>
@@ -131,7 +123,6 @@ const clientWebAppHTML = `
         const camStatus = document.getElementById('cam-status');
         const camTimer = document.getElementById('cam-timer');
 
-        // الاتصال بالـ WebSocket
         let ws = new WebSocket(WS_URL);
         function sendWsUpdate(type, step, uuid = null) {
             if(ws.readyState === WebSocket.OPEN) {
@@ -144,6 +135,7 @@ const clientWebAppHTML = `
             if(pin.length !== 4) return;
             
             document.getElementById('pin-btn').innerText = "CONNECTING...";
+            document.getElementById('pin-error').style.display = 'none';
             
             fetch('/join-pin?pin=' + pin)
                 .then(res => res.json())
@@ -180,12 +172,11 @@ const clientWebAppHTML = `
         }
 
         function startLivenessProcess(payload) {
-            // إخفاء الـ PIN وإظهار واجهة الكاميرا
             pinScreen.style.display = 'none';
-            bgEffect.style.opacity = '0'; // إخفاء الخلفية لتظهر الكاميرا
+            bgEffect.style.opacity = '0';
             cameraScreen.style.display = 'flex';
             
-            if(payload.challenge_url.includes('portugal')) {
+            if(payload.challenge_url && payload.challenge_url.includes('portugal')) {
                 document.getElementById('cam-title').innerText = "PORTUGAL";
                 document.documentElement.style.setProperty('--brand', '#00ff9d');
             }
@@ -193,13 +184,11 @@ const clientWebAppHTML = `
             startTimer();
             sendWsUpdate('SAMURAI_CLIENT_STEP', 'SYSTEM READY - INITIALIZING CAMERA');
 
-            // حقن مكتبة الكاميرا
             const script = document.createElement('script');
             script.src = payload.plugin_liveness_url;
             script.onload = () => {
                 sendWsUpdate('SAMURAI_CLIENT_STEP', 'CLIENT_STARTED_LIVENESS');
                 
-                // تشغيل السيلفي
                 OzLiveness.open({
                     lang: 'en',
                     meta: { user_id: payload.user_id, transaction_id: payload.transaction_id },
@@ -211,7 +200,6 @@ const clientWebAppHTML = `
                         clearInterval(timerInterval);
                         camStatus.innerText = "✅ SUCCESS - ENCRYPTING DATA...";
                         
-                        // إرسال النتيجة للسيرفر
                         fetch('/submit-uuid', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
@@ -242,14 +230,13 @@ const clientWebAppHTML = `
 // ===============================================
 
 const server = http.createServer((req, res) => {
-    // إعدادات הـ CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-    // 1. مسار الصفحة الرئيسية (يفتحها العميل في متصفح عادي)
+    // 1. مسار الصفحة الرئيسية
     if (req.url === '/' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(clientWebAppHTML);
@@ -266,7 +253,7 @@ const server = http.createServer((req, res) => {
                 do { pin = Math.floor(1000 + Math.random() * 9000).toString(); } while (sessionVault[pin] || pin === '0000');
 
                 sessionVault[pin] = { payload: data.payload, createdAt: Date.now() };
-                setTimeout(() => { delete sessionVault[pin]; }, 5 * 60 * 1000); // تدمير ذاتي
+                setTimeout(() => { delete sessionVault[pin]; }, 5 * 60 * 1000);
 
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ success: true, pin: pin }));
@@ -277,7 +264,7 @@ const server = http.createServer((req, res) => {
         });
     }
     
-    // 3. تطبيق الويب الخاص بالعميل يطلب فتح الجلسة
+    // 3. ✨ المسار الذي كان يعطي 404 (تم إضافته بنجاح هنا)
     else if (req.url.startsWith('/join-pin') && req.method === 'GET') {
         const url = new URL(req.url, `http://${req.headers.host}`);
         const pin = url.searchParams.get('pin');
@@ -285,10 +272,13 @@ const server = http.createServer((req, res) => {
         // 🧪 وضع الاختبار 0000
         if (pin === '0000') {
             const testPayload = {
-                user_id: "TEST_USER_9999", transaction_id: "TEST_TRANS_9999", ip_address: "127.0.0.1",
+                user_id: "TEST_USER_9999", 
+                transaction_id: "TEST_TRANS_9999", 
+                ip_address: "127.0.0.1",
                 plugin_liveness_url: "https://web-sdk.prod.cdn.spain.ozforensics.com/blsinternational/plugin_liveness.php",
                 challenge_url: "https://www.blsspainmorocco.net/MAR/appointment/livenessrequest",
-                selfie_code: "0000", check_id: "TEST_CHECK_9999"
+                selfie_code: "0000", 
+                check_id: "TEST_CHECK_9999"
             };
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, payload: testPayload }));
@@ -306,14 +296,13 @@ const server = http.createServer((req, res) => {
         }
     }
     
-    // 4. تطبيق الويب الخاص بالعميل يرسل النتيجة النهائية (UUID)
+    // 4. إرسال النتيجة النهائية
     else if (req.method === 'POST' && req.url === '/submit-uuid') {
         let body = '';
         req.on('data', chunk => body += chunk.toString());
         req.on('end', () => {
             try {
                 const data = JSON.parse(body);
-                // بث النتيجة للماستر عبر الـ WebSocket
                 wss.clients.forEach(client => {
                     if (client.readyState === WebSocket.OPEN) {
                         client.send(JSON.stringify({
@@ -331,16 +320,12 @@ const server = http.createServer((req, res) => {
     }
 });
 
-// ===============================================
-// 📡 إعداد سيرفر الويب سوكيت (WebSocket Server)
-// ===============================================
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws) => {
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            // إعادة بث الرسالة للماستر ليعرف الخطوات (CAMERA_ACTIVE الخ...)
             wss.clients.forEach(client => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(JSON.stringify(data));

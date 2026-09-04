@@ -51,12 +51,24 @@ app.post('/create-short-link', (req, res) => {
         return res.status(400).json({ error: "No session data provided" });
     }
 
+    // 🔥 التعديل هنا: استخراج الروابط الجديدة صراحة لضمان حفظها بشكل صحيح وآمن
+    const newSession = {
+        user_id: sessionData.user_id,
+        transaction_id: sessionData.transaction_id,
+        ip_address: sessionData.ip_address,
+        plugin_liveness_url: sessionData.plugin_liveness_url,
+        challenge_url: sessionData.challenge_url,
+        check_id: sessionData.check_id,
+        config_url: sessionData.config_url || null, // الرابط الأول (config.php)
+        init_url: sessionData.init_url || null      // الرابط الثاني (init.php)
+    };
+
     // توليد كود عشوائي من 6 أحرف وأرقام
     const shortCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     
     // حفظ البيانات في السيرفر وربطها بالكود
-    shortSessions.set(shortCode, sessionData);
-    console.log(`[SESSION CREATED] Short Code: ${shortCode}`);
+    shortSessions.set(shortCode, newSession);
+    console.log(`[SESSION CREATED] Short Code: ${shortCode} | Includes OZ URLs: ${!!newSession.config_url}`);
 
     // تنظيف الذاكرة: حذف الجلسة تلقائياً بعد 15 دقيقة
     setTimeout(() => {

